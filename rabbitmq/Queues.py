@@ -92,6 +92,10 @@ class SpritesQueue(AsyncBaseQueue):
 
     async def callback(self, message):
         pokemon = json.loads(message.body.decode('utf8'))
+
+        if not pokemon['url']:
+            return
+
         img = await self.request(pokemon['url'])
 
         if not img:
