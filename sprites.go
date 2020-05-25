@@ -97,6 +97,15 @@ func download(pokemon *Pokemon) {
 		})
 }
 
+func processMessage(msgs <-chan amqp.Delivery) {
+	p := new(Pokemon)
+	for d := range msgs {
+		json.Unmarshal(d.Body, p)
+		download(p)
+		d.Ack(true)
+	}
+}
+
 func consumeSprites() {
 	conn, err := amqpConnect()
 	defer conn.Close()
@@ -125,18 +134,10 @@ func consumeSprites() {
 		nil)
 	failOnError(err, "Failed to register a consumer")
 
-	go func() {
-		p := new(Pokemon)
-		for d := range msgs {
-			json.Unmarshal(d.Body, p)
-			download(p)
-			d.Ack(true)
-		}
-	}()
-
 	forever := make(chan bool)
 
 	fmt.Printf("[*] Consuming Sprites\n")
+	processMessage(msgs)
 
 	<-forever
 }
