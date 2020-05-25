@@ -115,22 +115,40 @@ func consumeSprites() {
 	defer conn.Close()
 	failOnError(err, "Can't get connection channel!")
 
-	queue, _ := ch.QueueDeclare(
-		"urls_sprites",
-		true,
+	err = ch.ExchangeDeclare(
+		"pokemons",
+		"direct",
+		false,
 		false,
 		false,
 		false,
 		nil)
+	failOnError(err, "Can't get exchange channel!")
+
+	queue, _ := ch.QueueDeclare(
+		"urls_sprites", // Name
+		false,          // Durable
+		false,          // AutoDelete
+		false,          // Exclusive
+		false,          // NO AWAIT
+		nil)
 	failOnError(err, "Can't declare Queue")
 
-	msgs, err := ch.Consume(
+	err = ch.QueueBind(
 		queue.Name,
 		"urls_sprites",
-		false, // "ACK"
-		false, // "Exclusive"
+		"pokemons",
 		false,
-		false,
+		nil)
+	failOnError(err, "Can't bind Queue")
+
+	msgs, err := ch.Consume(
+		queue.Name,     // Queue
+		"urls_sprites", // Consumer
+		false,          // "ACK"
+		true,           // "Exclusive"
+		false,          // No local
+		false,          // No await
 		nil)
 	failOnError(err, "Failed to register a consumer")
 
