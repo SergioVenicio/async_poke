@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/streadway/amqp"
 )
@@ -99,10 +100,12 @@ func download(pokemon *Pokemon) {
 
 func processMessage(msgs <-chan amqp.Delivery) {
 	p := new(Pokemon)
+	if len(msgs) == 0 {
+		time.Sleep(10)
+	}
 	for d := range msgs {
 		json.Unmarshal(d.Body, p)
 		download(p)
-		d.Ack(true)
 	}
 }
 
@@ -125,17 +128,8 @@ func consumeSprites() {
 		nil)
 	failOnError(err, "Can't get exchange channel!")
 
-	queue, _ := ch.QueueDeclare(
-		"urls_sprites", // Name
-		false,          // Durable
-		false,          // AutoDelete
-		false,          // Exclusive
-		false,          // NO AWAIT
-		nil)
-	failOnError(err, "Can't declare Queue")
-
 	err = ch.QueueBind(
-		queue.Name,
+		"urls_sprites",
 		"urls_sprites",
 		"pokemons",
 		false,
@@ -143,23 +137,21 @@ func consumeSprites() {
 	failOnError(err, "Can't bind Queue")
 
 	msgs, err := ch.Consume(
-		queue.Name,     // Queue
+		"urls_sprites",     // Queue
 		"urls_sprites", // Consumer
-		false,          // "ACK"
-		true,           // "Exclusive"
+		true,          // "ACK"
+		false,           // "Exclusive"
 		false,          // No local
 		false,          // No await
 		nil)
 	failOnError(err, "Failed to register a consumer")
 
-	forever := make(chan bool)
-
-	fmt.Printf("[*] Consuming Sprites\n")
-	processMessage(msgs)
-
-	<-forever
+	go processMessage(msgs)
 }
 
 func main() {
-	consumeSprites()
+	fmt.Printf("[*] Consuming Sprites\n")
+	for {
+		consumeSprites()
+	}
 }
