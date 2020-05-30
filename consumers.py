@@ -1,14 +1,14 @@
 import asyncio
 import argparse
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 
 from rabbitmq import Queues
 
 
 __WORKERS__ = {
     'url': Queues.URLQueue,
-	'download': Queues.DownloadQueue,
-	'sprite': Queues.SpritesQueue,
+    'download': Queues.DownloadQueue,
+    'sprite': Queues.SpritesQueue,
+    'error': Queues.ErrorQueue,
 }
 
 parser = argparse.ArgumentParser()
@@ -17,6 +17,7 @@ parser.add_argument(
     type=str,
 )
 args = parser.parse_args()
+
 
 async def main(loop):
     worker_maker = __WORKERS__.get(args.worker, 'download')

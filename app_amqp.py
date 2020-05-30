@@ -34,12 +34,10 @@ async def main(loop):
         rmtree('downloads')
     os.makedirs('downloads')
 
-
     for url in urls:
         pokemons = get(url).send().response.json()['results']
 
         for pokemon in pokemons:
-            print(pokemon)
             await url_queue.publish(
                 json.dumps(pokemon)
             )

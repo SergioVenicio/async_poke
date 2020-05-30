@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+from datetime import datetime
 
 import aiofiles
 import aio_pika
@@ -14,7 +15,7 @@ class AsyncBaseQueue:
         self.queue = queue
         self.key = key
         self.io_loop = io_loop
-        self.connection_pool =  Pool(self.connect, max_size=5, loop=io_loop)
+        self.connection_pool = Pool(self.connect, max_size=5, loop=io_loop)
         self.channel_pool = Pool(self.get_channel, max_size=50, loop=io_loop)
 
     async def get_channel(self):
@@ -34,14 +35,14 @@ class AsyncBaseQueue:
 
     async def publish(self, body):
         async with self.channel_pool.acquire() as channel:
-            await channel.set_qos(10)
+            await channel.set_qos(50)
             exchange = await self.declare_exchange(channel)
             msg = await self.message(body)
             await exchange.publish(msg, self.key)
 
     async def consume(self):
         async with self.channel_pool.acquire() as channel:
-            await channel.set_qos(10)
+            await channel.set_qos(50)
             exchange = await self.declare_exchange(channel)
             queue = await channel.declare_queue(
                 self.queue, auto_delete=False, durable=True, exclusive=False
@@ -89,20 +90,36 @@ class SpritesQueue(AsyncBaseQueue):
     def __init__(self, io_loop):
         super().__init__('pokemons', 'urls_sprites', 'urls_sprites', io_loop)
         self.dwl_queue = DownloadQueue(io_loop)
+        self.error_queue = ErrorQueue(io_loop)
 
     async def callback(self, message):
         pokemon = json.loads(message.body.decode('utf8'))
 
         if not pokemon['url']:
+            await self.error_queue.publish(
+                origin_queue='SpritesQueue',
+                msg_body=pokemon,
+                error='Pokemon not found!'
+            )
+            await message.ack()
+            print(f"[ERROR] {pokemon['url']} not found...")
             return
 
         img = await self.request(pokemon['url'])
 
         if not img:
+            e = f"[ERROR] {pokemon['name']} image not found!"
+            await self.error_queue.publish(
+                origin_queue='SpritesQueue',
+                msg_body=pokemon,
+                error=e
+            )
+            print(e)
             await message.ack()
             return
 
-        print(f"[SpriteQueue] Getting sprite {pokemon['name']}/{pokemon['sprite']}...")
+        info = f"{pokemon['name']}/{pokemon['sprite']}"
+        print(f"[SpriteQueue] Getting sprite {info}...")
 
         msg = json.dumps({
             'src': str(base64.b64encode(img.content)),
@@ -117,6 +134,7 @@ class URLQueue(AsyncBaseQueue):
     def __init__(self, io_loop):
         super().__init__('pokemons', 'urls', 'urls', io_loop)
         self.sprite_queue = SpritesQueue(io_loop)
+        self.error_queue = ErrorQueue(io_loop)
 
     async def callback(self, message):
         body = json.loads(message.body.decode('utf8'))
@@ -124,7 +142,12 @@ class URLQueue(AsyncBaseQueue):
 
         try:
             resp = get(body['url']).send().response.json()
-        except AttributeError:
+        except AttributeError as e:
+            await self.error_queue.publish(
+                origin_queue='URLQueue',
+                msg_body=body,
+                error=str(e)
+            )
             await message.ack()
             return
 
@@ -136,4 +159,25 @@ class URLQueue(AsyncBaseQueue):
             }
             await self.sprite_queue.publish(json.dumps(msg))
 
+        await message.ack()
+
+
+class ErrorQueue(AsyncBaseQueue):
+    def __init__(self, io_loop):
+        super().__init__('pokemons', 'errors', 'errors', io_loop)
+        self._file = 'errors.txt'
+
+    async def publish(self, origin_queue, msg_body, error=''):
+        msg = {
+            'queue': origin_queue,
+            'msg_body': json.dumps(msg_body),
+            'error': error,
+            'timestamp': datetime.now().timestamp(),
+        }
+        return await super().publish(json.dumps(msg))
+
+    async def callback(self, message):
+        body = json.loads(message.body.decode('utf8'))
+        with open(self._file, 'a') as _f:
+            _f.write(str(body) + '\n')
         await message.ack()
