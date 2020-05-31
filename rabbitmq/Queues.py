@@ -70,14 +70,15 @@ class DownloadQueue(AsyncBaseQueue):
         super().__init__('pokemons', 'download', 'download', io_loop)
 
     async def write_content(self, content, name):
-        _path = f'downloads/{name}.png  '
-        print(f'Writing {_path}...')
+        _path = f'downloads/{name}.png'
+        print(f'[DownloadQueue] Writing {_path}...')
         async with aiofiles.open(_path, 'wb') as _f:
             return await _f.write(content)
 
     async def callback(self, message):
         img = json.loads(message.body)
         _path = f"{img['name']}_{img['sprite']}"
+
         print(f"[DownloadQueue] Downloading {_path} image ...")
         b64_text = base64.b64decode(
             img['src'].encode().decode().replace("b'", '').replace("'", '')
@@ -99,22 +100,19 @@ class SpritesQueue(AsyncBaseQueue):
             await self.error_queue.publish(
                 origin_queue='SpritesQueue',
                 msg_body=pokemon,
-                error='Pokemon not found!'
+                error=f"[ERROR] {pokemon['url']} not found..."
             )
             await message.ack()
-            print(f"[ERROR] {pokemon['url']} not found...")
             return
 
         img = await self.request(pokemon['url'])
 
         if not img:
-            e = f"[ERROR] {pokemon['name']} image not found!"
             await self.error_queue.publish(
                 origin_queue='SpritesQueue',
                 msg_body=pokemon,
-                error=e
+                error=f"[ERROR] {pokemon['name']} image not found!"
             )
-            print(e)
             await message.ack()
             return
 

@@ -40,7 +40,6 @@ func amqpConnect() (*amqp.Connection, error) {
 func readContent(Body io.Reader) (string, error) {
 	body, err := ioutil.ReadAll(Body)
 	failOnError(err, "Can't read content")
-	return "", err
 
 	content := base64.StdEncoding.EncodeToString(body)
 
@@ -52,16 +51,14 @@ func download(pokemon *Pokemon) {
 		return
 	}
 
-	fmt.Printf("[*] Getting %s/%s...\n", pokemon.Name, pokemon.Sprite)
+	fmt.Printf("[SpriteQueue] Getting sprite %s/%s...\n", pokemon.Name, pokemon.Sprite)
 
 	resp, err := http.Get(pokemon.Url)
-
 	if err != nil {
 		return
 	}
 
-	content, err := readContent(resp.Body)
-
+	content, _ := readContent(resp.Body)
 	sprite := SpriteImg{
 		Src:    content,
 		Name:   pokemon.Name,
@@ -127,6 +124,15 @@ func consumeSprites() {
 		false,
 		nil)
 	failOnError(err, "Can't get exchange channel!")
+
+	_, err = ch.QueueDeclare(
+		"urls_sprites", // name
+		true,
+		false,
+		false,
+		false,
+		nil)
+	failOnError(err, "Failed to declare a queue")
 
 	err = ch.QueueBind(
 		"urls_sprites",
