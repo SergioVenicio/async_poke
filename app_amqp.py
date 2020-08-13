@@ -28,6 +28,7 @@ def iter_poke(poke_map):
 
 async def main(loop):
     url_queue = URLQueue(loop)
+    await url_queue.setUpQueue()
     urls = make_urls()
 
     if os.path.exists('downloads'):

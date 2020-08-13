@@ -22,6 +22,8 @@ args = parser.parse_args()
 async def main(loop):
     worker_maker = __WORKERS__.get(args.worker, 'download')
     worker = worker_maker(loop)
+    await worker.setUpQueue()
+    await worker.bind()
     await worker.consume()
 
 if __name__ == "__main__":

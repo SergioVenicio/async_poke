@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import json
 from datetime import datetime
@@ -15,8 +14,24 @@ class AsyncBaseQueue:
         self.queue = queue
         self.key = key
         self.io_loop = io_loop
-        self.connection_pool = Pool(self.connect, max_size=5, loop=io_loop)
-        self.channel_pool = Pool(self.get_channel, max_size=50, loop=io_loop)
+        self.connection_pool = Pool(self.connect, loop=io_loop)
+        self.channel_pool = Pool(self.get_channel, loop=io_loop)
+
+    async def setUpQueue(self):
+
+        channel = await self.get_channel()
+        await channel.set_qos(1)
+
+        self._exchange = await self.declare_exchange(channel)
+        self._queue = await channel.declare_queue(
+            self.queue,
+            auto_delete=False,
+            durable=True,
+            exclusive=False
+        )
+
+    async def bind(self):
+        await self._queue.bind(self._exchange, self.key)
 
     async def get_channel(self):
         async with self.connection_pool.acquire() as connection:
@@ -24,7 +39,7 @@ class AsyncBaseQueue:
 
     async def connect(self):
         return await aio_pika.connect_robust(
-            f"amqp://rabbitmq_user:rabbitmq_password@localhost:5672/",
+            "amqp://rabbitmq_user:rabbitmq_password@localhost:5672/",
             loop=self.io_loop
         )
 
@@ -34,27 +49,13 @@ class AsyncBaseQueue:
         )
 
     async def publish(self, body):
-        async with self.channel_pool.acquire() as channel:
-            await channel.set_qos(50)
-            exchange = await self.declare_exchange(channel)
-            msg = await self.message(body)
-            await exchange.publish(msg, self.key)
+        msg = await self.message(body)
+        await self._exchange.publish(msg, self.key)
 
     async def consume(self):
-        async with self.channel_pool.acquire() as channel:
-            await channel.set_qos(50)
-            exchange = await self.declare_exchange(channel)
-            queue = await channel.declare_queue(
-                self.queue, auto_delete=False, durable=True, exclusive=False
-            )
-
-            await queue.bind(exchange, self.key)
-
-            async with queue.iterator() as queue_iter:
-                async for message in queue_iter:
-                    await self.callback(message)
-
-            return conn
+        async with self._queue.iterator() as queue_messages:
+            async for message in queue_messages:
+                await self.callback(message)
 
     async def message(self, body, content_type='application/json'):
         return aio_pika.Message(
@@ -93,6 +94,11 @@ class SpritesQueue(AsyncBaseQueue):
         self.dwl_queue = DownloadQueue(io_loop)
         self.error_queue = ErrorQueue(io_loop)
 
+    async def setUpQueue(self):
+        await super().setUpQueue()
+        await self.dwl_queue.setUpQueue()
+        await self.error_queue.setUpQueue()
+
     async def callback(self, message):
         pokemon = json.loads(message.body.decode('utf8'))
 
@@ -113,8 +119,7 @@ class SpritesQueue(AsyncBaseQueue):
                 msg_body=pokemon,
                 error=f"[ERROR] {pokemon['name']} image not found!"
             )
-            await message.ack()
-            return
+            return await message.ack()
 
         info = f"{pokemon['name']}/{pokemon['sprite']}"
         print(f"[SpriteQueue] Getting sprite {info}...")
@@ -129,10 +134,16 @@ class SpritesQueue(AsyncBaseQueue):
 
 
 class URLQueue(AsyncBaseQueue):
+
     def __init__(self, io_loop):
         super().__init__('pokemons', 'urls', 'urls', io_loop)
         self.sprite_queue = SpritesQueue(io_loop)
         self.error_queue = ErrorQueue(io_loop)
+
+    async def setUpQueue(self):
+        await super().setUpQueue()
+        await self.sprite_queue.setUpQueue()
+        await self.error_queue.setUpQueue()
 
     async def callback(self, message):
         body = json.loads(message.body.decode('utf8'))
@@ -149,15 +160,25 @@ class URLQueue(AsyncBaseQueue):
             await message.ack()
             return
 
+        for sprite in self.iter_resp_sprites(resp):
+            await self.publish_sprite(sprite)
+
+        await message.ack()
+
+    def iter_resp_sprites(self, resp):
         for sprite in resp['sprites']:
-            msg = {
+            if (isinstance(resp['sprites'][sprite], dict) or
+                    not resp['sprites'][sprite]):
+                continue
+
+            yield {
                 'name': resp['name'],
                 'url': resp['sprites'][sprite],
                 'sprite': sprite
             }
-            await self.sprite_queue.publish(json.dumps(msg))
 
-        await message.ack()
+    async def publish_sprite(self, sprite):
+        return await self.sprite_queue.publish(json.dumps(sprite))
 
 
 class ErrorQueue(AsyncBaseQueue):
